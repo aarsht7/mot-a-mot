@@ -1,0 +1,40 @@
+name: Publish French flashcards
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install conjugation libraries
+        run: npm install --no-audit --no-fund
+      - name: Build 1,500+ vocabulary cards and verb tables
+        run: npm run build && npm test
+      - name: Assemble static website
+        run: |
+          mkdir -p _site/data
+          cp index.html styles.css app.js shared.js advanced.js favicon.svg ATTRIBUTION.md .nojekyll _site/
+          cp data/cards.json data/conjugations.json data/french-vocabulary.csv _site/data/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
