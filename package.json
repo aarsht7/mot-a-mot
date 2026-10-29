@@ -4,6 +4,6 @@
   "private":true,
   "type":"module",
   "description":"Static GitHub Pages swipe cards for French A1–C1 learning",
-  "scripts":{"build":"node scripts/build-data.mjs","test":"node --test scripts/tests.test.mjs"},
+  "scripts":{"build":"node scripts/build-data.mjs","assemble":"node scripts/assemble-site.mjs","build:vercel":"npm run build && npm run assemble","test":"node --test scripts/tests.test.mjs"},
   "dependencies":{"french-verbs":"5.4.0","french-verbs-lefff":"3.4.0"}
 }

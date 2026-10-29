@@ -1,9 +1,36 @@
 import {buildDeck, fallbackDeck, CHAPTERS, chapterUrl} from './shared.js';
+import {outcomeForSwipe, validSlowThreshold, DEFAULT_SLOW_THRESHOLD_SECONDS} from './recall.js';
 const $=id=>document.getElementById(id);
 const STORAGE='motamot-progress-v1';
+const THEME_STORAGE='motamot-theme';
+const RECALL_SETTING_STORAGE='motamot-slow-threshold';
 const day=86400_000;
 const defaultData=()=>({version:1,records:{}});
 let progress=loadProgress(),cards=[],conjugations={},active=null,flipped=false,conjOpen=false,currentTense='PRESENT',visited=new Set(),history=[],sessionNo=0,shuffleSeed=0,shuffledOrder=null,loading=true;
+let recallStartedAt=Date.now(),recallPauseStartedAt=null,recallPausedMs=0,recallLockedMs=null;
+let slowThresholdSeconds=loadSlowThreshold();
+function loadSlowThreshold(){try{return validSlowThreshold(localStorage.getItem(RECALL_SETTING_STORAGE))}catch{return DEFAULT_SLOW_THRESHOLD_SECONDS}}
+function beginRecall(){recallStartedAt=Date.now();recallPausedMs=0;recallLockedMs=null;recallPauseStartedAt=document.hidden?recallStartedAt:null}
+function elapsedRecall(){
+ if(recallLockedMs!==null)return recallLockedMs;
+ const now=Date.now();return Math.max(0,now-recallStartedAt-recallPausedMs-(recallPauseStartedAt===null?0:now-recallPauseStartedAt));
+}
+function lockRecall(){if(recallLockedMs===null)recallLockedMs=elapsedRecall()}
+function onVisibilityChanged(){const pause=document.hidden||!!$('settingsDialog')?.open;if(pause){if(recallPauseStartedAt===null)recallPauseStartedAt=Date.now()}else if(recallPauseStartedAt!==null){recallPausedMs+=Date.now()-recallPauseStartedAt;recallPauseStartedAt=null}}
+function applyTheme(theme){
+ const next=theme==='dark'?'dark':'light';document.documentElement.dataset.theme=next;
+ $('themeGlyph').textContent=next==='dark'?'☼':'☾';$('themeButton').setAttribute('aria-label',`Switch to ${next==='dark'?'light':'dark'} theme`);
+ $('themeButton').setAttribute('aria-pressed',String(next==='dark'));
+ $('browserThemeColor').content=next==='dark'?'#101720':'#f8f7f3';
+ try{localStorage.setItem(THEME_STORAGE,next)}catch{}
+}
+function toggleTheme(){applyTheme(document.documentElement.dataset.theme==='dark'?'light':'dark')}
+function updateThreshold(){
+ slowThresholdSeconds=validSlowThreshold($('slowThreshold').value);
+ $('slowThreshold').value=String(slowThresholdSeconds);
+ setText('slowHint',`If recall takes over ${slowThresholdSeconds} seconds, a right swipe goes into Learning automatically.`);
+ try{localStorage.setItem(RECALL_SETTING_STORAGE,String(slowThresholdSeconds))}catch{}
+}
 const countsByStatus=()=>{
  const counts={known:0,learning:0,unknown:0,unseen:0,due:0};
  for(const c of cards){const r=progress.records[c.id];if(!r)counts.unseen++;else counts[r.status]++;if(r&&r.due<=Date.now())counts.due++}
@@ -21,6 +48,7 @@ function filteredPool(){const f=filters();const now=Date.now();return cards.filt
  const r=progress.records[c.id];
  if(f.mode==='new'&&r)return false;
  if(f.mode==='unknown'&&r?.status!=='unknown')return false;
+ if(f.mode==='learning'&&r?.status!=='learning')return false;
  if(f.mode==='due'&&(!r||r.due>now))return false;
  if(f.mode==='smart'&&r&&r.due>now)return false;
  return true;
@@ -34,11 +62,13 @@ function chooseNext(){
  else pool.sort((a,b)=>order.get(a.id)-order.get(b.id));
  return pool[0];
 }
-function showNewCard(){active=chooseNext();flipped=false;conjOpen=false;currentTense='PRESENT';sessionNo++;render()}
+function showNewCard(){active=chooseNext();flipped=false;conjOpen=false;currentTense='PRESENT';sessionNo++;beginRecall();render()}
 function resetSession(){visited.clear();history.length=0;shuffleSeed=0;shuffledOrder=null;sessionNo=0;showNewCard()}
-function showCount(){const c=countsByStatus(),total=cards.length; $('datasetBadge').textContent=loading?'Loading deck…':`${total.toLocaleString()} cards · A1–C1`; $('masteredCount').textContent=c.known.toLocaleString();$('learningCount').textContent=c.learning.toLocaleString();$('unknownCount').textContent=c.unknown.toLocaleString();$('remainingCount').textContent=c.unseen.toLocaleString();$('dueCount').textContent=c.due.toLocaleString();$('progressFill').style.width=total?Math.min(100,c.known/total*100)+'%':'0%'}
+function showCount(){const c=countsByStatus(),total=cards.length; $('datasetBadge').textContent=loading?'Loading deck…':`${total.toLocaleString()} cards · A1–C1`; $('masteredCount').textContent=c.known.toLocaleString();$('learningCount').textContent=c.learning.toLocaleString();$('unknownCount').textContent=c.unknown.toLocaleString();$('remainingCount').textContent=c.unseen.toLocaleString();$('dueCount').textContent=c.due.toLocaleString();$('learningTabCount').textContent=c.learning.toLocaleString();$('unknownTabCount').textContent=c.unknown.toLocaleString();$('progressFill').style.width=total?Math.min(100,c.known/total*100)+'%':'0%';renderTabs()}
 function setText(id,value){$(id).textContent=value}
-function render(){showCount();const buttons=['unknownButton','learningButton','knownButton','listenButton','conjButton'];
+function renderTabs(){const mode=$('modeFilter').value;for(const [id,selected] of [['studyTab',mode!=='learning'&&mode!=='unknown'],['learningTab',mode==='learning'],['unknownTab',mode==='unknown']]){$(id).classList.toggle('active',selected);$(id).setAttribute('aria-pressed',String(selected))}}
+function switchTab(mode){$('modeFilter').value=mode;resetSession()}
+function render(){showCount();const buttons=['unknownButton','knownButton','listenButton','conjButton'];
  if(!active){
   setText('sessionCounter',`${visited.size} studied this session`);setText('cardFrench',loading?'Loading vocabulary…':'All caught up!');setText('cardEnglish','');setText('cardGrammar',loading?'Fetching the vocabulary library': 'Change filters or shuffle for another round.');setText('tapHint',loading?'':'No more cards in this set right now.');$('translationWrap').hidden=true;$('tapHint').hidden=false;$('cardLevel').textContent='—';$('cardType').textContent='DONE';$('cardTopic').textContent=loading?'Loading':'Your learning deck';$('cardIndex').textContent='';buttons.forEach(id=>$(id).disabled=true);$('conjButton').hidden=true;$('conjPanel').hidden=true;$('undoButton').disabled=!history.length;return;
  }
@@ -49,15 +79,18 @@ function render(){showCount();const buttons=['unknownButton','learningButton','k
  setText('cardGrammar',grammar);$('conjButton').hidden=active.type!=='verb';$('conjButton').disabled=false;$('translationWrap').hidden=!flipped;$('tapHint').hidden=flipped;$('flashcard').setAttribute('aria-label',flipped?'Translation shown. Tap to hide':'Tap or press space to reveal translation');$('conjPanel').hidden=!conjOpen;$('conjButton').setAttribute('aria-expanded',String(conjOpen));$('undoButton').disabled=!history.length;
  if(conjOpen)renderConjugations();
 }
-function flip(){if(!active)return;flipped=!flipped;$('translationWrap').hidden=!flipped;$('tapHint').hidden=flipped;$('flashcard').setAttribute('aria-label',flipped?'Translation shown. Tap to hide':'Tap or press space to reveal translation')}
-function rating(status){if(!active)return;
+function flip(){if(!active)return;if(!flipped)lockRecall();flipped=!flipped;$('translationWrap').hidden=!flipped;$('tapHint').hidden=flipped;$('flashcard').setAttribute('aria-label',flipped?'Translation shown. Tap to hide':'Tap or press space to reveal translation')}
+function rateSwipe(direction){if(!active)return;
+ const recallMs=elapsedRecall(),status=outcomeForSwipe(direction,recallMs,slowThresholdSeconds);
  const old=progress.records[active.id]||null,now=Date.now(),streak=status==='known'?(old?.status==='known'?Math.min(5,(old.streak||0)+1):1):0;
  const spacing=status==='unknown'?10/1440:status==='learning'?1:[0,3,7,14,30,60,90][streak]||3;
  history.push({card:active,prev:old,visited:new Set(visited)});if(history.length>30)history.shift();
- progress.records[active.id]={status,streak,reviews:(old?.reviews||0)+1,last:now,due:now+spacing*day};
- visited.add(active.id);save();showNewCard();toast(status==='known'?'Well done — spaced review scheduled':status==='learning'?'Saved for tomorrow':'Saved — review again soon');
+ progress.records[active.id]={status,streak,reviews:(old?.reviews||0)+1,last:now,due:now+spacing*day,recallMs:Math.round(recallMs)};
+ visited.add(active.id);save();showNewCard();
+ const label=status==='known'?'Know it — spaced review scheduled':status==='learning'?`Slow recall (${Math.ceil(recallMs/1000)}s) → saved to Learning`:'Don’t know — review again soon';
+ toast(label);
 }
-function undo(){const h=history.pop();if(!h)return;if(h.prev)progress.records[h.card.id]=h.prev;else delete progress.records[h.card.id];visited=h.visited;active=h.card;flipped=true;conjOpen=false;save();render();toast('Rating undone')}
+function undo(){const h=history.pop();if(!h)return;if(h.prev)progress.records[h.card.id]=h.prev;else delete progress.records[h.card.id];visited=h.visited;active=h.card;flipped=true;conjOpen=false;beginRecall();lockRecall();save();render();toast('Rating undone')}
 function shuffle(){visited.clear();shuffleSeed++;history.length=0;shuffledOrder=[...cards];for(let i=shuffledOrder.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[shuffledOrder[i],shuffledOrder[j]]=[shuffledOrder[j],shuffledOrder[i]]}showNewCard();toast('Cards shuffled — new study round')}
 const TENSE_NAMES={PRESENT:'Présent',PASSE_COMPOSE:'Passé composé',IMPARFAIT:'Imparfait',FUTUR:'Futur simple',CONDITIONNEL_PRESENT:'Conditionnel',SUBJONCTIF_PRESENT:'Subjonctif',PLUS_QUE_PARFAIT:'Plus-que-parfait'};
 const PRONOUNS=['je','tu','il / elle','nous','vous','ils / elles'];
@@ -95,28 +128,48 @@ function renderConjugations(){if(!active)return;const lemma=active.lemma;setText
 }
 function toggleConj(force){if(!active||active.type!=='verb')return;conjOpen=typeof force==='boolean'?force:!conjOpen;$('conjPanel').hidden=!conjOpen;$('conjButton').setAttribute('aria-expanded',String(conjOpen));if(conjOpen)renderConjugations()}
 function speak(){if(!active)return;if(!('speechSynthesis' in window)){toast('Speech playback is unavailable in this browser');return}try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(active.fr.replace(/\s*\([^)]*\)/g,''));u.lang='fr-FR';u.rate=.83;const voices=speechSynthesis.getVoices().filter(v=>v.lang.toLowerCase().startsWith('fr'));if(voices.length)u.voice=voices[0];speechSynthesis.speak(u)}catch{toast('Could not play the French pronunciation')}}
-function openSettings(){$('settingsDialog').showModal()}
+function openSettings(){$('settingsDialog').showModal();onVisibilityChanged()}
 function exportProgress(){const blob=new Blob([JSON.stringify({...progress,exportedAt:new Date().toISOString()},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`mot-a-mot-progress-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
-async function importProgress(file){if(!file)return;try{const text=await file.text();if(text.length>4_000_000)throw Error('Backup is too large');const obj=JSON.parse(text);if(!obj||!obj.records||Array.isArray(obj.records)||typeof obj.records!=='object')throw Error('Invalid backup format');let n=0;for(const [id,r] of Object.entries(obj.records)){if(!/^fr-[a-z0-9]+$/.test(id)||!['known','learning','unknown'].includes(r?.status))continue;if(!Number.isFinite(r.due))continue;const old=progress.records[id];if(!old||r.last>=old.last){progress.records[id]={status:r.status,streak:Math.max(0,Math.min(6,+r.streak||0)),reviews:Math.max(0,+r.reviews||1),last:+r.last||0,due:+r.due};n++}}save();resetSession();$('settingsDialog').close();toast(`Imported ${n} card ratings`)}catch(e){alert('Could not import backup: '+e.message)}finally{$('importInput').value=''}}
+async function importProgress(file){if(!file)return;try{const text=await file.text();if(text.length>4_000_000)throw Error('Backup is too large');const obj=JSON.parse(text);if(!obj||!obj.records||Array.isArray(obj.records)||typeof obj.records!=='object')throw Error('Invalid backup format');let n=0;for(const [id,r] of Object.entries(obj.records)){if(!/^fr-[a-z0-9]+$/.test(id)||!['known','learning','unknown'].includes(r?.status))continue;if(!Number.isFinite(r.due))continue;const old=progress.records[id];if(!old||r.last>=old.last){progress.records[id]={status:r.status,streak:Math.max(0,Math.min(6,+r.streak||0)),reviews:Math.max(0,+r.reviews||1),last:+r.last||0,due:+r.due,recallMs:Number.isFinite(r.recallMs)?Math.max(0,Math.round(r.recallMs)):undefined};n++}}save();resetSession();$('settingsDialog').close();toast(`Imported ${n} card ratings`)}catch(e){alert('Could not import backup: '+e.message)}finally{$('importInput').value=''}}
 function wire(){
  $('flashcard').addEventListener('click',e=>{if(e.target.closest('button'))return;if(Date.now()<suppressClickUntil)return;flip()});
- let start=null,suppressClickUntil=0;
- $('flashcard').addEventListener('pointerdown',e=>{if(e.target.closest('button'))return;start={x:e.clientX,y:e.clientY,time:Date.now()}});
- $('flashcard').addEventListener('pointerup',e=>{if(!start||e.target.closest('button'))return;const dx=e.clientX-start.x,dy=e.clientY-start.y;start=null;if(Math.abs(dx)>75&&Math.abs(dx)>Math.abs(dy)*1.2){suppressClickUntil=Date.now()+500;rating(dx<0?'unknown':'known')}else if(dy>90&&dy>Math.abs(dx)*1.1){suppressClickUntil=Date.now()+500;rating('learning')}});
- $('flashcard').addEventListener('pointercancel',()=>start=null);
+ let pointerStart=null,suppressClickUntil=0;
+ function resetDrag(){pointerStart=null;$('flashcard').style.transform='';$('flashcard').classList.remove('dragging','drag-left','drag-right')}
+ $('flashcard').addEventListener('pointerdown',e=>{
+  if(e.target.closest('button')||!active||e.button!==0)return;
+  pointerStart={x:e.clientX,y:e.clientY,id:e.pointerId};
+  try{$('flashcard').setPointerCapture(e.pointerId)}catch{}
+ });
+ $('flashcard').addEventListener('pointermove',e=>{
+  if(!pointerStart||pointerStart.id!==e.pointerId)return;
+  const dx=e.clientX-pointerStart.x,dy=e.clientY-pointerStart.y;
+  if(Math.abs(dx)<8||Math.abs(dx)<Math.abs(dy)*1.15)return;
+  const x=Math.max(-130,Math.min(130,dx));$('flashcard').classList.add('dragging');
+  $('flashcard').classList.toggle('drag-left',dx<0);$('flashcard').classList.toggle('drag-right',dx>0);
+  $('flashcard').style.transform=`translateX(${x}px) rotate(${x/26}deg)`;
+ });
+ $('flashcard').addEventListener('pointerup',e=>{
+  if(!pointerStart||pointerStart.id!==e.pointerId)return;
+  const dx=e.clientX-pointerStart.x,dy=e.clientY-pointerStart.y;resetDrag();
+  if(Math.abs(dx)>=70&&Math.abs(dx)>Math.abs(dy)*1.15){suppressClickUntil=Date.now()+500;rateSwipe(dx<0?'left':'right')}
+ });
+ $('flashcard').addEventListener('pointercancel',resetDrag);
  $('flashcard').addEventListener('keydown',e=>{if(e.target!==$('flashcard'))return;if(e.key===' '||e.key==='Enter'){e.preventDefault();e.stopPropagation();flip()}});
- for(const status of ['unknown','learning','known'])$(status+'Button').addEventListener('click',()=>rating(status));
+ $('unknownButton').addEventListener('click',()=>rateSwipe('left'));
+ $('knownButton').addEventListener('click',()=>rateSwipe('right'));
  $('undoButton').addEventListener('click',undo);$('shuffleButton').addEventListener('click',shuffle);
  $('conjButton').addEventListener('click',e=>{e.stopPropagation();toggleConj()});$('closeConj').addEventListener('click',()=>toggleConj(false));$('listenButton').addEventListener('click',e=>{e.stopPropagation();speak()});
  for(const id of ['levelFilter','typeFilter','modeFilter'])$(id).addEventListener('change',resetSession);
+ $('studyTab').addEventListener('click',()=>switchTab('smart'));$('learningTab').addEventListener('click',()=>switchTab('learning'));$('unknownTab').addEventListener('click',()=>switchTab('unknown'));
+ $('themeButton').addEventListener('click',toggleTheme);$('slowThreshold').addEventListener('change',updateThreshold);document.addEventListener('visibilitychange',onVisibilityChanged);$('settingsDialog').addEventListener('close',onVisibilityChanged);
  $('searchInput').addEventListener('input',resetSession);
  $('clearFilters').addEventListener('click',()=>{$('levelFilter').value='all';$('typeFilter').value='all';$('modeFilter').value='smart';$('searchInput').value='';resetSession()});
  document.addEventListener('keydown',e=>{if($('settingsDialog').open||['INPUT','SELECT','TEXTAREA','BUTTON'].includes(document.activeElement?.tagName))return;
- if(e.key==='ArrowLeft'){e.preventDefault();rating('unknown')}else if(e.key==='ArrowRight'){e.preventDefault();rating('known')}else if(e.key==='ArrowDown'){e.preventDefault();rating('learning')}else if(e.key===' '){e.preventDefault();flip()}});
+ if(e.key==='ArrowLeft'){e.preventDefault();rateSwipe('left')}else if(e.key==='ArrowRight'){e.preventDefault();rateSwipe('right')}else if(e.key===' '){e.preventDefault();flip()}});
  $('settingsButton').addEventListener('click',openSettings);$('closeSettings').addEventListener('click',()=>$('settingsDialog').close());$('exportButton').addEventListener('click',exportProgress);$('importInput').addEventListener('change',e=>importProgress(e.target.files[0]));
  $('resetButton').addEventListener('click',()=>{if(confirm('Reset ALL learning progress on this browser? This cannot be undone unless you have exported a backup.')){progress=defaultData();save();resetSession();$('settingsDialog').close();toast('All progress reset')}});
 }
-async function start(){wire();render();
+async function start(){wire();applyTheme(document.documentElement.dataset.theme);$('slowThreshold').value=String(slowThresholdSeconds);updateThreshold();render();
  try{const r=await fetch('./data/cards.json',{cache:'no-cache'});if(!r.ok)throw Error('Static deck not available');const result=await r.json();if(!Array.isArray(result)||result.length<1500)throw Error('Static deck incomplete');cards=result;
  }catch{
   try{const fetched=await Promise.all(CHAPTERS.map((_,i)=>fetch(chapterUrl(i),{signal:AbortSignal.timeout(6500)}).then(r=>{if(!r.ok)throw Error(`Chapter ${i} HTTP ${r.status}`);return r.text()})));cards=buildDeck(fetched);if(cards.length<1500)throw Error('Incomplete source data');}

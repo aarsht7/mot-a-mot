@@ -27,14 +27,11 @@ jobs:
       - name: Build 1,500+ vocabulary cards and verb tables
         run: npm run build && npm test
       - name: Assemble static website
-        run: |
-          mkdir -p _site/data
-          cp index.html styles.css app.js shared.js advanced.js favicon.svg ATTRIBUTION.md .nojekyll _site/
-          cp data/cards.json data/conjugations.json data/french-vocabulary.csv _site/data/
+        run: npm run assemble
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: dist
       - name: Publish to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

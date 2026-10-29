@@ -3,7 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f8f7f3">
+  <meta name="theme-color" content="#f8f7f3" id="browserThemeColor">
+  <script>
+    try {
+      const saved = localStorage.getItem('motamot-theme');
+      document.documentElement.dataset.theme = saved === 'dark' || saved === 'light'
+        ? saved : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    } catch (_) { document.documentElement.dataset.theme = 'light'; }
+  </script>
   <meta name="description" content="Learn 1,500+ French words and phrases from A1 to C1 with swipe cards, conjugations and spaced repetition.">
   <title>Mot à Mot — French swipe cards</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -14,7 +21,7 @@
   <div class="shell">
     <header class="site-header">
       <a href="./" class="brand" aria-label="Mot à Mot, home"><span class="brand-mark">m<span>·</span></span><span>mot <em>à</em> mot<small>FRENCH, ONE CARD AT A TIME</small></span></a>
-      <div class="header-side"><span class="pill" id="datasetBadge">Loading deck…</span><button class="icon-btn" id="settingsButton" type="button" title="Settings and data backup" aria-label="Settings and data backup">⚙</button></div>
+      <div class="header-side"><span class="pill" id="datasetBadge">Loading deck…</span><button class="icon-btn theme-toggle" id="themeButton" type="button" aria-label="Switch to dark theme" title="Switch color theme" aria-pressed="false"><span id="themeGlyph" aria-hidden="true">☾</span></button><button class="icon-btn" id="settingsButton" type="button" title="Settings and data backup" aria-label="Settings and data backup">⚙</button></div>
     </header>
     <main class="layout">
       <aside class="sidebar" aria-label="Study settings and progress">
@@ -37,7 +44,7 @@
           <label for="typeFilter">Card type</label>
           <select id="typeFilter"><option value="all">All words & phrases</option><option value="noun">Nouns</option><option value="verb">Verbs</option><option value="phrase">Phrases</option><option value="other">Other words</option></select>
           <label for="modeFilter">Study mode</label>
-          <select id="modeFilter"><option value="smart">Smart review · Recommended</option><option value="new">New words only</option><option value="due">Due for review</option><option value="unknown">Words I don't know</option><option value="all">Every card</option></select>
+          <select id="modeFilter"><option value="smart">Smart review · Recommended</option><option value="new">New words only</option><option value="due">Due for review</option><option value="learning">Learning queue</option><option value="unknown">Words I don't know</option><option value="all">Every card</option></select>
           <label for="searchInput">Find a word</label>
           <input id="searchInput" placeholder="French or English…" autocomplete="off" type="search">
           <button class="reset-button" id="clearFilters" type="button">Clear filters <span>↗</span></button>
@@ -46,10 +53,15 @@
       </aside>
       <section class="study-area" aria-label="Flashcard study area">
         <div class="study-heading"><div><div class="eyebrow"><span class="dot"></span> DAILY PRACTICE</div><h2>Make it <i>stick.</i></h2></div><div class="review-today"><strong id="dueCount">0</strong><small>cards due today</small></div></div>
-        <div class="session-line"><span id="sessionCounter">Card 1</span><span id="sessionHint">Tap to reveal · Swipe to rate</span></div>
+        <div class="deck-tabs" aria-label="Study categories">
+          <button class="deck-tab active" id="studyTab" type="button" aria-pressed="true">Study</button>
+          <button class="deck-tab" id="learningTab" type="button" aria-pressed="false">Learning <span id="learningTabCount">0</span></button>
+          <button class="deck-tab" id="unknownTab" type="button" aria-pressed="false">Don't know <span id="unknownTabCount">0</span></button>
+        </div>
+        <div class="session-line"><span id="sessionCounter">Card 1</span><span id="sessionHint">Tap to reveal · Swipe ← or →</span></div>
         <div class="card-stack">
           <div class="ghost-card ghost-2" aria-hidden="true"></div><div class="ghost-card ghost-1" aria-hidden="true"></div>
-          <article id="flashcard" class="flashcard" tabindex="0" role="button" aria-label="Show translation" aria-live="polite">
+          <article id="flashcard" class="flashcard" tabindex="0" role="group" aria-label="Flashcard: tap or press space to reveal translation">
             <div class="flash-top"><div class="tag-row"><span class="level-tag" id="cardLevel">A1</span><span class="type-tag" id="cardType">VOCABULARY</span></div><div class="flash-top-actions"><button id="listenButton" class="mini-action" type="button" title="Hear pronunciation" aria-label="Hear French pronunciation">♫ <span>Listen</span></button><button id="conjButton" class="mini-action" type="button" hidden aria-expanded="false" aria-controls="conjPanel">☷ <span>Conjugate</span></button></div></div>
             <div class="flash-content"><div class="word-label">EN FRANÇAIS</div><div id="cardFrench" class="card-french">Bonjour</div><div id="cardGrammar" class="card-grammar">GREETING</div><div id="translationWrap" class="translation-wrap"><div class="divider-glyph">✳</div><div class="word-label">IN ENGLISH</div><div id="cardEnglish" class="card-english">Hello</div></div><div id="tapHint" class="tap-hint">Tap to reveal the translation <span>↗</span></div></div>
             <div class="flash-footer"><span id="cardTopic">Everyday French</span><span id="cardIndex">001 / 1600</span></div>
@@ -57,13 +69,15 @@
         </div>
         <section id="conjPanel" class="conj-panel" hidden aria-label="Verb conjugations"><div class="conj-head"><div><span class="eyebrow">VERB REFERENCE</span><h3 id="conjTitle">Conjugation</h3></div><button id="closeConj" class="conj-close" type="button" aria-label="Close conjugations">×</button></div><div id="tenseTabs" class="tense-tabs" role="group" aria-label="Choose tense"></div><div id="conjBody"></div><p class="conj-note">Past participles with <i>être</i> may change for gender and number. Forms are a study aid; context determines auxiliary usage.</p></section>
         <div id="feedback" class="feedback" aria-live="polite"></div>
-        <div class="actions"><button id="unknownButton" class="rate-button unknown" type="button"><span class="rate-icon">←</span><span>Don't know<small>Review soon</small></span></button><button id="learningButton" class="rate-button learning" type="button"><span class="rate-icon">↓</span><span>Learning<small>Keep practicing</small></span></button><button id="knownButton" class="rate-button known" type="button"><span class="rate-icon">→</span><span>Know it<small>See it later</small></span></button></div>
+        <div class="swipe-legend" aria-label="Swipe directions"><span class="swipe-unknown">← Don't know</span><span class="swipe-mid">SWIPE THE CARD</span><span class="swipe-known">Know it →</span></div>
+        <p class="slow-hint" id="slowHint">If recall takes over 12 seconds, a right swipe goes into Learning automatically.</p>
+        <div class="assistive-ratings"><button id="unknownButton" class="sr-only-focusable" type="button">Mark don't know</button><button id="knownButton" class="sr-only-focusable" type="button">Mark know it (slow responses become Learning)</button></div>
         <div class="under-actions"><button id="undoButton" type="button">↶ Undo last rating</button><button id="shuffleButton" type="button">⤨ Shuffle cards</button></div>
-        <div class="tip"><span class="tip-icon">✦</span><p><b>A small tip:</b> Try guessing the meaning before revealing the answer. Say the French out loud, then rate your recall—not just familiarity.</p></div>
+        <div class="tip"><span class="tip-icon">✦</span><p><b>A small tip:</b> Recall the meaning before tapping to reveal. Swipe left if unsure, right if you know it. Slow recall moves into Learning; the timer stops when you first reveal the translation.</p></div>
       </section>
     </main>
     <footer>Built for real life · French A1–C1 · Your study history stays in this browser</footer>
   </div>
-  <dialog id="settingsDialog" class="settings-dialog"><div class="dialog-head"><div><div class="eyebrow">YOUR DATA</div><h2>Study settings</h2></div><button type="button" id="closeSettings" class="conj-close" aria-label="Close">×</button></div><p>Progress is stored only on this browser/device. GitHub Pages does not provide automatic account synchronization. Export a backup before changing devices or clearing browsing data.</p><div class="settings-actions"><button type="button" id="exportButton">↓ Export progress (.json)</button><label class="import-label" for="importInput">↑ Import progress (.json)</label><input type="file" id="importInput" accept=".json,application/json" hidden></div><p class="small-note"><a href="./data/french-vocabulary.csv" download>Download full French vocabulary as CSV</a> (available after the GitHub Pages build).</p><p class="small-note">Imports merge your saved ratings for existing cards. Older backup entries are retained if the vocabulary dataset changes.</p><div class="danger-zone"><button type="button" id="resetButton">Reset all progress</button></div></dialog>
+  <dialog id="settingsDialog" class="settings-dialog"><div class="dialog-head"><div><div class="eyebrow">YOUR DATA</div><h2>Study settings</h2></div><button type="button" id="closeSettings" class="conj-close" aria-label="Close">×</button></div><div class="threshold-setting"><label for="slowThreshold">Slow-recall threshold</label><select id="slowThreshold"><option value="8">8 seconds</option><option value="12">12 seconds (recommended)</option><option value="20">20 seconds</option><option value="30">30 seconds</option></select><p class="small-note">Only time spent recalling the word counts. The timer stops when you first reveal the translation and pauses if you switch tabs. Slow right swipes are saved under Learning.</p></div><p>Progress is stored only on this browser/device. GitHub Pages does not provide automatic account synchronization. Export a backup before changing devices or clearing browsing data.</p><div class="settings-actions"><button type="button" id="exportButton">↓ Export progress (.json)</button><label class="import-label" for="importInput">↑ Import progress (.json)</label><input type="file" id="importInput" accept=".json,application/json" hidden></div><p class="small-note"><a href="./data/french-vocabulary.csv" download>Download full French vocabulary as CSV</a> (available after the GitHub Pages build).</p><p class="small-note">Imports merge your saved ratings for existing cards. Older backup entries are retained if the vocabulary dataset changes.</p><div class="danger-zone"><button type="button" id="resetButton">Reset all progress</button></div></dialog>
 </body>
 </html>
